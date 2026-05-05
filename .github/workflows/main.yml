@@ -1,0 +1,55 @@
+name: 24/7 Live Streamer
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target Video URL'
+        required: true
+        default: 'https://dlstreams.com/player/stream-598.php'
+      okru_stream_channel:
+        description: 'OK.ru Stream ID (1 to 8)'
+        required: true
+        default: '1'
+      stream_quality:
+        description: 'Stream Quality'
+        required: false
+        default: '110KBps (Balanced 480p)'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 Hours max time limit by GitHub
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+
+      - name: Install System Packages (Xvfb, FFmpeg, Audio)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg pulseaudio dbus-x11
+
+      - name: Start Virtual Display & Audio Server
+        run: |
+          Xvfb :99 -screen 0 1280x720x24 &
+          export DISPLAY=:99
+          pulseaudio -D --exit-idle-time=-1
+          pacmd load-module module-virtual-sink sink_name=v1
+
+      - name: Start Live Stream Script
+        env:
+          DISPLAY: :99
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+          OKRU_STREAM_ID: ${{ github.event.inputs.okru_stream_channel }}
+          STREAM_QUALITY: ${{ github.event.inputs.stream_quality }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: node stream.js
