@@ -142,26 +142,24 @@ async function startDirectStreaming() {
     if (!targetFrame) throw new Error('No <video> element could be found.');
 
     // =========================================================================
-    // 🔊 AUDIO UNLOCKER + UI HIDER (UPDATED FOR OPLAYER / NEW DADDYLIVE UI)
+    // 🔊 AUDIO UNLOCKER + UI HIDER (STEALTH INITIALIZATION)
     // =========================================================================
-    console.log('[*] Stealth Mode: Simulating user click, unmuting video and hiding player UI...');
+    console.log('[*] Stealth Mode: Setting up Video DOM and hiding UI...');
     await targetFrame.evaluate(async () => {
-        // 1. Pehle "Play" button ko dhoondh kar click karo taake video load hona shuru ho
+        // 1. Initial play button click attempt
         const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('button');
         if (playBtn) {
             try { playBtn.click(); } catch(e) {}
         }
         
-        // Thoda wait karte hain taake click register ho jaye
         await new Promise(res => setTimeout(res, 500));
 
-        // 2. CSS Injection: Purane aur naye tamaam player UI elements aur overlays ko gayab kar do
+        // 2. CSS Injection: Hide all UI elements permanently
         const style = document.createElement('style');
         style.innerHTML = `
             .jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, .clappr-core, 
             [data-player] .controls, .unmute-overlay, .play-overlay, button, 
             .dplayer-controller, .dplayer-notice,
-            /* OPlayer & New DaddyLive Specific CSS Classes */
             .css-22y0zb, .css-1d9k47s, .css-rte19r, .css-1jpoid8, .css-re32dp, .css-3krx7z,
             div[aria-label="Error Overlay"], div[aria-label="Notice"], div[aria-label="Loading"],
             op-ui, .oplayer-ui {
@@ -173,7 +171,7 @@ async function startDirectStreaming() {
         `;
         document.head.appendChild(style);
 
-        // 3. HTML5 video tag ko pakar kar unmute aur play karo
+        // 3. Initial Video Play attempt
         const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
         if (video) {
             video.muted = false; 
@@ -235,9 +233,9 @@ async function startDirectStreaming() {
     startBroadcast();
 
     // =========================================================================
-    // 🧠 THE SMART WATCHDOG (Privacy 2.0 & Absolute Top Overlay)
+    // 🧠 THE SMART WATCHDOG (Now with Built-in Anti-Pause Checker)
     // =========================================================================
-    console.log('\n[*] Smart Engine Connected! Monitoring Video Health & Privacy 24/7...');
+    console.log('\n[*] Smart Engine Connected! Monitoring Video Health, Privacy & PLAY STATUS 24/7...');
 
     let bufferCounter = 0; 
 
@@ -261,8 +259,8 @@ async function startDirectStreaming() {
             });
         }).catch(() => {});
 
-        // 🔍 STEP 2: CHECK VIDEO STATUS (Inside Iframe)
-        const status = await targetFrame.evaluate(() => {
+        // 🔍 STEP 2: CHECK VIDEO STATUS & FORCE PLAY (Inside Iframe)
+        const status = await targetFrame.evaluate(async () => {
             const bodyText = document.body.innerText.toLowerCase();
             if (bodyText.includes("stream error") || bodyText.includes("could not be loaded")) {
                 return 'CRITICAL_ERROR';
@@ -270,6 +268,19 @@ async function startDirectStreaming() {
 
             const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
             if (!v || v.ended) return 'DEAD';
+
+            // 🛑 ANTI-PAUSE CHECKER: Har dafa check karega ke video pause toh nahi hai
+            if (v.paused) {
+                v.muted = false; // Always ensure it is unmuted
+                try { await v.play(); } catch(e) {}
+                
+                // Agar standard play() kaam na kare, toh DOM Play Button ko dhoondh kar dobara click karega
+                const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('.vjs-big-play-button');
+                if (playBtn) {
+                    try { playBtn.click(); } catch(e) {}
+                }
+                return 'FORCE_PLAYED'; // Special status return karega
+            }
 
             if (v.readyState < 2) return 'BUFFERING';
 
@@ -286,15 +297,17 @@ async function startDirectStreaming() {
             return 'HEALTHY';
         }).catch(() => 'EVAL_ERROR');
 
-        // 🛑 STEP 3: HANDLE BUFFERING OVERLAY ON THE MAIN PAGE (UPDATED FOR USER RETENTION)
-        if (status === 'BUFFERING') {
+        // 🛑 STEP 3: HANDLE SPECIAL STATUSES
+        if (status === 'FORCE_PLAYED') {
+            console.log('[*] ⚠️ Watchdog Detected Pause! Code automatically triggered PLAY command via DOM.');
+            bufferCounter = 0; // Buffer counter reset kar do taake stream restart na ho jaye
+        } else if (status === 'BUFFERING') {
             await page.evaluate(() => {
                 let overlay = document.getElementById('main-watchdog-overlay');
                 if (!overlay) {
                     overlay = document.createElement('div');
                     overlay.id = 'main-watchdog-overlay';
                     
-                    // ******************** STYLISH LOADING ADDED HERE ********************
                     overlay.innerHTML = `
                         <style>
                             @keyframes spin { 
@@ -307,13 +320,13 @@ async function startDirectStreaming() {
                                 font-family: sans-serif;
                             }
                             .loader {
-                                border: 8px solid rgba(255, 255, 255, 0.1); /* Halka white border */
-                                border-top: 8px solid #ffaa00; /* Orange-yellow rotating top border (OK.ru themed) */
+                                border: 8px solid rgba(255, 255, 255, 0.1); 
+                                border-top: 8px solid #ffaa00; 
                                 border-radius: 50%;
                                 width: 80px;
                                 height: 80px;
                                 animation: spin 1s linear infinite;
-                                margin: 0 auto 30px auto; /* Centered with bottom margin */
+                                margin: 0 auto 30px auto; 
                             }
                             .loading-text {
                                 font-size: 32px;
@@ -322,7 +335,7 @@ async function startDirectStreaming() {
                             }
                             .reassurance-text {
                                 font-size: 20px;
-                                color: #cccccc; /* Halka grey color for less emphasis */
+                                color: #cccccc; 
                                 font-weight: normal;
                             }
                         </style>
@@ -332,15 +345,14 @@ async function startDirectStreaming() {
                             <div class="reassurance-text">कृपया प्रतीक्षा करें, यह शीघ्र ही फिर से शुरू होगा!</div>
                         </div>
                     `;
-                    // **************************************************************************
                     
                     overlay.style.position = 'fixed';
                     overlay.style.top = '0';
                     overlay.style.left = '0';
                     overlay.style.width = '100vw';
                     overlay.style.height = '100vh';
-                    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; // Bahut gehra black, halka transparent background
-                    overlay.style.zIndex = '2147483647'; // Sabse upar
+                    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; 
+                    overlay.style.zIndex = '2147483647'; 
                     overlay.style.display = 'flex';
                     overlay.style.alignItems = 'center';
                     overlay.style.justifyContent = 'center';
@@ -394,7 +406,6 @@ setTimeout(async () => {
     const token = process.env.GH_PAT;
     const ref = process.env.GITHUB_REF_NAME || 'main';
     
-    // Image ke mutabiq aapki file ka naam main.yml hai
     const workflowFileName = 'main.yml'; 
 
     if (!repo || !token) {
