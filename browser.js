@@ -28,15 +28,15 @@ let browser = null;
 let ffmpegProcess = null;
 
 // =========================================================================
-// 🔄 MAIN LOOP
+// 🔄 MAIN LOOP (HARD RESTART - Sirf Browser Crash hone par chalega)
 // =========================================================================
 async function mainLoop() {
     while (true) {
         try {
             await startDirectStreaming();
         } catch (error) {
-            console.error(`\n[!] ALERT: ${error.message}`);
-            console.log('[*] 🔄 Restarting everything in 3 seconds as requested...');
+            console.error(`\n[!] FATAL ERROR: ${error.message}`);
+            console.log('[*] 🔄 Doing a full HARD RESTART in 3 seconds as requested...');
             await cleanup();
             await new Promise(resolve => setTimeout(resolve, 3000));
         }
@@ -66,6 +66,7 @@ async function startDirectStreaming() {
         browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
     }
 
+    // 🌐 1. LAUNCH BROWSER
     console.log(`Launching Browser on Virtual Screen with Proxy: ${useProxy ? 'ON' : 'OFF'}...`);
     browser = await puppeteer.launch({
         channel: 'chrome',
@@ -75,18 +76,37 @@ async function startDirectStreaming() {
         args: browserArgs
     });
 
-    const page = await browser.newPage();
+    const page = await browser.newPage(); // Main stream page
+    const holdingPage = await browser.newPage(); // The Safe Black Screen
+
+    // 🛡️ Setup the Safe Black Screen (Holding Page)
+    await holdingPage.evaluate(() => {
+        document.body.innerHTML = `
+            <style>
+                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                .loader { border: 8px solid rgba(255, 255, 255, 0.1); border-top: 8px solid #ffaa00; border-radius: 50%; width: 80px; height: 80px; animation: spin 1s linear infinite; margin: 0 auto 30px auto; }
+            </style>
+            <div style="background-color: black; color: white; width: 100vw; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; margin: 0;">
+                <div class="loader"></div>
+                <h1 style="font-size: 32px; margin-bottom: 15px;">लोड हो रहा है...</h1>
+                <p style="color: #cccccc; font-size: 20px;">कृपया प्रतीक्षा करें, यह शीघ्र ही फिर से शुरू होगा!</p>
+            </div>
+        `;
+        document.body.style.margin = '0';
+        document.body.style.overflow = 'hidden';
+    });
+
     const pages = await browser.pages();
     for (const p of pages) {
-        if (p !== page) await p.close();
+        if (p !== page && p !== holdingPage) await p.close();
     }
 
-    // Aggressive Ad-Popup Blocker
+    // 🛑 Aggressive Ad-Popup Blocker
     browser.on('targetcreated', async (target) => {
         if (target.type() === 'page') {
             try {
                 const newPage = await target.page();
-                if (newPage && newPage !== page) {
+                if (newPage && newPage !== page && newPage !== holdingPage) {
                     console.log(`[*] Adware tab detected! Forcing video tab back to foreground...`);
                     await page.bringToFront(); 
                     setTimeout(() => newPage.close().catch(() => { }), 2000);
@@ -99,304 +119,236 @@ async function startDirectStreaming() {
         await page.authenticate({ username: proxyUser, password: proxyPass });
     }
 
+    // 📡 2. START FFMPEG BROADCAST IMMEDIATELY
     const displayNum = process.env.DISPLAY || ':99';
+    let ffmpegArgs = [];
 
-    console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
-    await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    console.log('[*] Waiting for potential Cloudflare...');
-    for (let i = 0; i < 15; i++) {
-        const title = await page.title();
-        if (!title.includes('Moment') && !title.includes('Cloudflare')) break;
-        await new Promise(r => setTimeout(r, 1000));
+    if (streamQuality.includes('40KBps')) {
+        console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)...');
+        ffmpegArgs = [
+            '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+            '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
+            '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+            '-vf', 'scale=640:360',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
+            '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
+            '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
+            '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
+            '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+        ];
+    } else {
+        console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)...');
+        ffmpegArgs = [
+            '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+            '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
+            '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+            '-vf', 'scale=854:480',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+            '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
+            '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
+            '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
+            '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+        ];
     }
 
-    await new Promise(resolve => setTimeout(resolve, 8000));
-
-    // =========================================================================
-    // 🧠 THE SMART SCANNER & CLEANER 
-    // =========================================================================
-    let targetFrame = null;
-    console.log('[*] Scanning iframes for the REAL Live Stream Video...');
-    for (const frame of page.frames()) {
-        try {
-            const isRealLiveStream = await frame.evaluate(() => {
-                const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-                if (!vid) return false;
-                if (vid.clientWidth < 300 || vid.clientHeight < 200) return false;
-                return true; 
-            });
-
-            if (isRealLiveStream) {
-                targetFrame = frame;
-                console.log(`[+] Smart Scanner selected Real Video in frame: ${frame.url() || 'unknown'}`);
-            }
-
-            await frame.evaluate(() => {
-                const floatedAd = document.getElementById('floated');
-                if (floatedAd) floatedAd.remove();
-            });
-        } catch (e) { }
-    }
-
-    if (!targetFrame) throw new Error('No <video> element could be found.');
-
-    // =========================================================================
-    // 🔊 AUDIO UNLOCKER + UI HIDER (STEALTH INITIALIZATION)
-    // =========================================================================
-    console.log('[*] Stealth Mode: Setting up Video DOM and hiding UI...');
-    await targetFrame.evaluate(async () => {
-        // 1. Initial play button click attempt
-        const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('button');
-        if (playBtn) {
-            try { playBtn.click(); } catch(e) {}
-        }
-        
-        await new Promise(res => setTimeout(res, 500));
-
-        // 2. CSS Injection: Hide all UI elements permanently
-        const style = document.createElement('style');
-        style.innerHTML = `
-            .jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, .clappr-core, 
-            [data-player] .controls, .unmute-overlay, .play-overlay, button, 
-            .dplayer-controller, .dplayer-notice,
-            .css-22y0zb, .css-1d9k47s, .css-rte19r, .css-1jpoid8, .css-re32dp, .css-3krx7z,
-            div[aria-label="Error Overlay"], div[aria-label="Notice"], div[aria-label="Loading"],
-            op-ui, .oplayer-ui {
-                display: none !important;
-                opacity: 0 !important;
-                visibility: hidden !important;
-                pointer-events: none !important;
-            }
-        `;
-        document.head.appendChild(style);
-
-        // 3. Initial Video Play attempt
-        const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-        if (video) {
-            video.muted = false; 
-            video.volume = 1.0; 
-            await video.play().catch(e => {});
+    ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    ffmpegProcess.stderr.on('data', (data) => {
+        const output = data.toString().trim();
+        if (output.includes('Error') || output.includes('Failed')) {
+            console.log(`\n[FFmpeg Issue]: ${output}`);
         }
     });
-
-    await new Promise(r => setTimeout(r, 2000));
-
-    // =========================================================================
-    // 📡 FFMPEG BROADCAST (WITH A/V SYNC)
-    // =========================================================================
-    function startBroadcast() {
-        if (ffmpegProcess) return; 
-        
-        let ffmpegArgs = [];
-
-        if (streamQuality.includes('40KBps')) {
-            console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)...');
-            ffmpegArgs = [
-                '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
-                '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
-                '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
-                '-vf', 'scale=640:360',
-                '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
-                '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
-                '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
-                '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
-                '-async', '1', '-f', 'flv', RTMP_DESTINATION 
-            ];
-        } else {
-            console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)...');
-            ffmpegArgs = [
-                '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
-                '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
-                '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
-                '-vf', 'scale=854:480',
-                '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
-                '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
-                '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
-                '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
-                '-async', '1', '-f', 'flv', RTMP_DESTINATION 
-            ];
-        }
-
-        ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-
-        ffmpegProcess.stderr.on('data', (data) => {
-            const output = data.toString().trim();
-            if (output.includes('Error') || output.includes('Failed')) {
-                console.log(`\n[FFmpeg Issue]: ${output}`);
-            }
-        });
-
-        ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
-    }
-
-    startBroadcast();
+    ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
 
     // =========================================================================
-    // 🧠 THE SMART WATCHDOG (Now with Built-in Anti-Pause & Freeze Checker)
+    // ⚡ SAFE SOFT RELOAD LOOP
     // =========================================================================
-    console.log('\n[*] Smart Engine Connected! Monitoring Video Health, Privacy & PLAY STATUS 24/7...');
-
-    let bufferCounter = 0; 
-
     while (true) {
-        if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
+        try {
+            // 🛡️ STEP A: Display Holding Page while stream loads in background
+            await holdingPage.bringToFront();
+            console.log(`\n[*] Safe Screen Active. Navigating to Stream in background...`);
+            
+            console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
+            await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        // 🛡️ STEP 1: CONSTANTLY ENFORCE MAIN PAGE PRIVACY
-        await page.evaluate(() => {
-            document.body.style.backgroundColor = 'black';
-            document.body.style.overflow = 'hidden';
-            const iframes = document.querySelectorAll('iframe');
-            iframes.forEach(iframe => {
-                iframe.style.position = 'fixed';
-                iframe.style.top = '0';
-                iframe.style.left = '0';
-                iframe.style.width = '100vw';
-                iframe.style.height = '100vh';
-                iframe.style.zIndex = '999999'; 
-                iframe.style.backgroundColor = 'black';
-                iframe.style.border = 'none';
+            console.log('[*] Waiting for potential Cloudflare...');
+            for (let i = 0; i < 15; i++) {
+                const title = await page.title();
+                if (!title.includes('Moment') && !title.includes('Cloudflare')) break;
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            await new Promise(resolve => setTimeout(resolve, 8000));
+
+            // 🧠 STEP B: THE SMART SCANNER & CLEANER 
+            let targetFrame = null;
+            console.log('[*] Scanning iframes for the REAL Live Stream Video...');
+            for (const frame of page.frames()) {
+                try {
+                    const isRealLiveStream = await frame.evaluate(() => {
+                        const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+                        if (!vid) return false;
+                        if (vid.clientWidth < 300 || vid.clientHeight < 200) return false;
+                        return true; 
+                    });
+
+                    if (isRealLiveStream) {
+                        targetFrame = frame;
+                        console.log(`[+] Smart Scanner selected Real Video in frame: ${frame.url() || 'unknown'}`);
+                    }
+
+                    await frame.evaluate(() => {
+                        const floatedAd = document.getElementById('floated');
+                        if (floatedAd) floatedAd.remove();
+                    });
+                } catch (e) { }
+            }
+
+            if (!targetFrame) throw new Error('No <video> element could be found.');
+
+            // 🔊 STEP C: AUDIO UNLOCKER + UI HIDER (STEALTH INITIALIZATION)
+            console.log('[*] Stealth Mode: Setting up Video DOM and hiding UI...');
+            
+            // Enforce Main Page Privacy (Black Background) before bringing to front
+            await page.evaluate(() => {
+                document.body.style.backgroundColor = 'black'; document.body.style.overflow = 'hidden';
+                const iframes = document.querySelectorAll('iframe');
+                iframes.forEach(iframe => {
+                    iframe.style.position = 'fixed'; iframe.style.top = '0'; iframe.style.left = '0';
+                    iframe.style.width = '100vw'; iframe.style.height = '100vh';
+                    iframe.style.zIndex = '999999'; iframe.style.backgroundColor = 'black'; iframe.style.border = 'none';
+                });
+            }).catch(() => {});
+
+            await targetFrame.evaluate(async () => {
+                const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('button');
+                if (playBtn) { try { playBtn.click(); } catch(e) {} }
+                await new Promise(res => setTimeout(res, 500));
+
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    .jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, .clappr-core, 
+                    [data-player] .controls, .unmute-overlay, .play-overlay, button, 
+                    .dplayer-controller, .dplayer-notice,
+                    .css-22y0zb, .css-1d9k47s, .css-rte19r, .css-1jpoid8, .css-re32dp, .css-3krx7z,
+                    div[aria-label="Error Overlay"], div[aria-label="Notice"], div[aria-label="Loading"],
+                    op-ui, .oplayer-ui { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
+                `;
+                document.head.appendChild(style);
+
+                const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+                if (video) {
+                    video.muted = false; video.volume = 1.0; 
+                    video.style.position = 'fixed'; video.style.top = '0'; video.style.left = '0';
+                    video.style.width = '100vw'; video.style.height = '100vh';
+                    video.style.zIndex = '2147483647'; video.style.backgroundColor = 'black'; video.style.objectFit = 'contain';
+                    await video.play().catch(e => {});
+                }
             });
-        }).catch(() => {});
 
-        // 🔍 STEP 2: CHECK VIDEO STATUS, FORCE PLAY & DETECT FREEZE (Inside Iframe)
-        const status = await targetFrame.evaluate(async () => {
-            const bodyText = document.body.innerText.toLowerCase();
-            if (bodyText.includes("stream error") || bodyText.includes("could not be loaded") || bodyText.includes("network error")) {
-                return 'CRITICAL_ERROR';
-            }
+            await new Promise(r => setTimeout(r, 2000));
 
-            const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-            if (!v || v.ended) return 'DEAD';
+            // 🌟 STEP D: Switch from Safe Screen to Clean Video Feed
+            console.log(`[+] Video is ready. Switching live feed from Holding Screen to Video!`);
+            await page.bringToFront();
 
-            // 🛑 ANTI-PAUSE CHECKER: Har dafa check karega ke video pause toh nahi hai
-            if (v.paused) {
-                v.muted = false; // Always ensure it is unmuted
-                try { await v.play(); } catch(e) {}
-                
-                // Agar standard play() kaam na kare, toh DOM Play Button ko dhoondh kar dobara click karega
-                const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('.vjs-big-play-button');
-                if (playBtn) {
-                    try { playBtn.click(); } catch(e) {}
+            // 🧠 STEP E: THE SMART WATCHDOG (Now Controls Soft Reload)
+            console.log('\n[*] Smart Engine Connected! Monitoring Video Health, Privacy & PLAY STATUS 24/7...');
+            let bufferCounter = 0; 
+            let needsReload = false;
+
+            while (!needsReload) {
+                if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
+
+                // Check Video Status
+                const status = await targetFrame.evaluate(async () => {
+                    const bodyText = document.body.innerText.toLowerCase();
+                    if (bodyText.includes("stream error") || bodyText.includes("could not be loaded") || bodyText.includes("network error")) return 'CRITICAL_ERROR';
+
+                    const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+                    if (!v || v.ended) return 'DEAD';
+
+                    // Anti-Pause
+                    if (v.paused) {
+                        v.muted = false;
+                        try { await v.play(); } catch(e) {}
+                        const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('.vjs-big-play-button');
+                        if (playBtn) { try { playBtn.click(); } catch(e) {} }
+                        return 'FORCE_PLAYED';
+                    }
+
+                    if (v.readyState < 2) return 'BUFFERING';
+
+                    // Anti-Freeze (currentTime tracking)
+                    if (typeof window.lastVideoTime === 'undefined') { window.lastVideoTime = -1; window.stuckCount = 0; }
+                    if (v.currentTime === window.lastVideoTime) window.stuckCount++;
+                    else window.stuckCount = 0; 
+                    window.lastVideoTime = v.currentTime;
+
+                    if (window.stuckCount > 4) return 'FROZEN';
+
+                    return 'HEALTHY';
+                }).catch(() => 'EVAL_ERROR');
+
+                // 🛑 Handle Statuses
+                if (status === 'FORCE_PLAYED') {
+                    console.log('[*] ⚠️ Watchdog Detected Pause! Code automatically triggered PLAY command via DOM.');
+                    bufferCounter = 0; 
+                } else if (status === 'BUFFERING') {
+                    await page.evaluate(() => {
+                        let overlay = document.getElementById('main-watchdog-overlay');
+                        if (!overlay) {
+                            overlay = document.createElement('div');
+                            overlay.id = 'main-watchdog-overlay';
+                            overlay.innerHTML = `
+                                <style>
+                                    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                                    .loader-container { text-align: center; color: white; font-family: sans-serif; }
+                                    .loader { border: 8px solid rgba(255, 255, 255, 0.1); border-top: 8px solid #ffaa00; border-radius: 50%; width: 80px; height: 80px; animation: spin 1s linear infinite; margin: 0 auto 30px auto; }
+                                    .loading-text { font-size: 32px; font-weight: bold; margin-bottom: 15px; }
+                                    .reassurance-text { font-size: 20px; color: #cccccc; font-weight: normal; }
+                                </style>
+                                <div class="loader-container">
+                                    <div class="loader"></div>
+                                    <div class="loading-text">Loading...</div>
+                                    <div class="reassurance-text">Please wait, stream is catching up!</div>
+                                </div>
+                            `;
+                            overlay.style.position = 'fixed'; overlay.style.top = '0'; overlay.style.left = '0';
+                            overlay.style.width = '100vw'; overlay.style.height = '100vh';
+                            overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; overlay.style.zIndex = '2147483647'; 
+                            overlay.style.display = 'flex'; overlay.style.alignItems = 'center'; overlay.style.justifyContent = 'center';
+                            document.body.appendChild(overlay);
+                        }
+                    }).catch(() => {});
+
+                    bufferCounter++;
+                    console.log(`[!] Video is buffering... showing Professional Secure Holding Screen. (${bufferCounter}/15)`);
+                    if (bufferCounter > 15) throw new Error("Video stuck in buffering for too long.");
+                } else {
+                    await page.evaluate(() => {
+                        let existingOverlay = document.getElementById('main-watchdog-overlay');
+                        if (existingOverlay) existingOverlay.remove();
+                    }).catch(() => {});
+                    bufferCounter = 0; 
                 }
-                return 'FORCE_PLAYED'; // Special status return karega
-            }
 
-            if (v.readyState < 2) return 'BUFFERING';
-
-            // ⏱️ ANTI-FREEZE DETECTOR: Track currentTime to see if video is actually moving
-            if (typeof window.lastVideoTime === 'undefined') {
-                window.lastVideoTime = -1;
-                window.stuckCount = 0;
-            }
-
-            // Agar time pichle check se change nahi hua, iska matlab stream stuck hai
-            if (v.currentTime === window.lastVideoTime) {
-                window.stuckCount++;
-            } else {
-                window.stuckCount = 0; // Agar time aage barha, toh reset kar do
-            }
-            window.lastVideoTime = v.currentTime;
-
-            // Agar lagataar 4 dafa (yani 12+ seconds) time nahi barha, toh declare it FROZEN
-            if (window.stuckCount > 4) {
-                return 'FROZEN';
-            }
-
-            // Enforce Video Stretch inside iframe
-            v.style.position = 'fixed';
-            v.style.top = '0';
-            v.style.left = '0';
-            v.style.width = '100vw';
-            v.style.height = '100vh';
-            v.style.zIndex = '2147483647';
-            v.style.backgroundColor = 'black';
-            v.style.objectFit = 'contain';
-
-            return 'HEALTHY';
-        }).catch(() => 'EVAL_ERROR');
-
-        // 🛑 STEP 3: HANDLE SPECIAL STATUSES
-        if (status === 'FORCE_PLAYED') {
-            console.log('[*] ⚠️ Watchdog Detected Pause! Code automatically triggered PLAY command via DOM.');
-            bufferCounter = 0; // Buffer counter reset kar do taake stream restart na ho jaye
-        } else if (status === 'BUFFERING') {
-            await page.evaluate(() => {
-                let overlay = document.getElementById('main-watchdog-overlay');
-                if (!overlay) {
-                    overlay = document.createElement('div');
-                    overlay.id = 'main-watchdog-overlay';
-                    
-                    overlay.innerHTML = `
-                        <style>
-                            @keyframes spin { 
-                                0% { transform: rotate(0deg); } 
-                                100% { transform: rotate(360deg); } 
-                            }
-                            .loader-container {
-                                text-align: center;
-                                color: white;
-                                font-family: sans-serif;
-                            }
-                            .loader {
-                                border: 8px solid rgba(255, 255, 255, 0.1); 
-                                border-top: 8px solid #ffaa00; 
-                                border-radius: 50%;
-                                width: 80px;
-                                height: 80px;
-                                animation: spin 1s linear infinite;
-                                margin: 0 auto 30px auto; 
-                            }
-                            .loading-text {
-                                font-size: 32px;
-                                font-weight: bold;
-                                margin-bottom: 15px;
-                            }
-                            .reassurance-text {
-                                font-size: 20px;
-                                color: #cccccc; 
-                                font-weight: normal;
-                            }
-                        </style>
-                        <div class="loader-container">
-                            <div class="loader"></div>
-                            <div class="loading-text">Loading...</div>
-                            <div class="reassurance-text">Please wait, stream is catching up!</div>
-                        </div>
-                    `;
-                    
-                    overlay.style.position = 'fixed';
-                    overlay.style.top = '0';
-                    overlay.style.left = '0';
-                    overlay.style.width = '100vw';
-                    overlay.style.height = '100vh';
-                    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; 
-                    overlay.style.zIndex = '2147483647'; 
-                    overlay.style.display = 'flex';
-                    overlay.style.alignItems = 'center';
-                    overlay.style.justifyContent = 'center';
-                    document.body.appendChild(overlay);
+                // Restart Handlers
+                if (status === 'FROZEN') {
+                    console.log(`\n[!] ⚡ STREAM FROZEN DETECTED! Doing a FAST SOFT RELOAD (OK.ru stays active)...`);
+                    needsReload = true; // Loop break, triggers fast reload
+                } else if (status === 'CRITICAL_ERROR' || status === 'DEAD') {
+                    console.log(`\n[!] ❌ STREAM DEAD! Hard restart required...`);
+                    throw new Error(`Watchdog detected video state as: ${status}.`); 
                 }
-            }).catch(() => {});
 
-            bufferCounter++;
-            console.log(`[!] Video is buffering... showing Professional Secure Holding Screen. (${bufferCounter}/15)`);
-            if (bufferCounter > 15) throw new Error("Video stuck in buffering for too long.");
-        } else {
-            await page.evaluate(() => {
-                let existingOverlay = document.getElementById('main-watchdog-overlay');
-                if (existingOverlay) existingOverlay.remove();
-            }).catch(() => {});
-            bufferCounter = 0; 
+                await new Promise(r => setTimeout(r, 3000)); 
+            }
+
+        } catch (innerError) {
+            console.error(`\n[!] Minor Error caught during stream: ${innerError.message}`);
+            if (!browser || !browser.isConnected()) throw innerError; // Fallback to Hard Restart
         }
-
-        // 💥 JAISE HI FROZEN DETECT HO, ERROR THROW KARO TA KE MAIN LOOP RESTART HO JAYE
-        if (status === 'CRITICAL_ERROR' || status === 'DEAD' || status === 'FROZEN') {
-            console.log(`\n[!] ❌ STREAM ${status} DETECTED! Token expired ya stream rukh gayi hai. Auto-Restarting...`);
-            throw new Error(`Watchdog detected video state as: ${status}. Needs fresh token.`); 
-        }
-
-        await new Promise(r => setTimeout(r, 3000)); 
     }
 }
 
@@ -463,6 +415,486 @@ setTimeout(async () => {
 }, 21000000); // 21,000,000 ms = exactly 5 Hours & 50 Minutes
 
 mainLoop();
+
+
+
+
+
+
+
+
+
+
+
+
+// ==== yeh teek hai mere khayl see yeh pora websie ko dobra start karta hai and opper wlaey mei srf current page =================
+
+
+// const puppeteer = require('puppeteer-extra');
+// const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+// puppeteer.use(StealthPlugin());
+
+// const { spawn, execSync } = require('child_process');
+// const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
+
+// // 🚀 Multi-Stream Key Manager
+// const STREAM_KEYS = {
+//     '1': '14601603391083_14040893622891_puxzrwjniu', 
+//     '2': '14601696583275_14041072274027_apdzpdb5xi', 
+//     '3': '14617940008555_14072500914795_ohw67ls7ny',
+//     '4': '14601972227691_14041593547371_obdhgewlmq',
+//     '5': '15145825803883_15082736847467_hjyjq4bud4',
+//     '6': '15145851166315_15082784229995_mr5eweath4', 
+//     '7': '15145866042987_15082813393515_axt6r27f7m',
+//     '8': '15145878756971_15082836265579_oeowgtmnxu'
+// };
+
+// const TARGET_URL = process.env.TARGET_URL || 'https://dadocric.st/player.php?id=starsp3&v=m';
+// const SELECTED_CHANNEL = process.env.OKRU_STREAM_ID || '1';
+// const ACTIVE_STREAM_KEY = STREAM_KEYS[SELECTED_CHANNEL] || STREAM_KEYS['1'];
+
+// const RTMP_SERVER = 'rtmp://vsu.okcdn.ru/input/';
+// const RTMP_DESTINATION = `${RTMP_SERVER}${ACTIVE_STREAM_KEY}`;
+
+// let browser = null;
+// let ffmpegProcess = null;
+
+// // =========================================================================
+// // 🔄 MAIN LOOP
+// // =========================================================================
+// async function mainLoop() {
+//     while (true) {
+//         try {
+//             await startDirectStreaming();
+//         } catch (error) {
+//             console.error(`\n[!] ALERT: ${error.message}`);
+//             console.log('[*] 🔄 Restarting everything in 3 seconds as requested...');
+//             await cleanup();
+//             await new Promise(resolve => setTimeout(resolve, 3000));
+//         }
+//     }
+// }
+
+// async function startDirectStreaming() {
+//     console.log(`[*] Starting browser and FFmpeg...`);
+//     console.log(`[+] Broadcasting to OK.ru CHANNEL: ${SELECTED_CHANNEL}`);
+
+//     const useProxy = process.env.USE_PROXY === 'ON';
+//     const proxyIpPort = process.env.PROXY_IP_PORT || '31.59.20.176:6754';
+//     const proxyUser = process.env.PROXY_USER || 'kexwytuq';
+//     const proxyPass = process.env.PROXY_PASS || 'fw1k19a4lqfd';
+    
+//     const streamQuality = process.env.STREAM_QUALITY || '110KBps (Balanced 480p)';
+
+//     const browserArgs = [
+//         '--no-sandbox',
+//         '--disable-setuid-sandbox',
+//         '--window-size=1280,720',
+//         '--kiosk', 
+//         '--autoplay-policy=no-user-gesture-required'
+//     ];
+
+//     if (useProxy) {
+//         browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
+//     }
+
+//     console.log(`Launching Browser on Virtual Screen with Proxy: ${useProxy ? 'ON' : 'OFF'}...`);
+//     browser = await puppeteer.launch({
+//         channel: 'chrome',
+//         headless: false, 
+//         defaultViewport: { width: 1280, height: 720 },
+//         ignoreDefaultArgs: ['--enable-automation'], 
+//         args: browserArgs
+//     });
+
+//     const page = await browser.newPage();
+//     const pages = await browser.pages();
+//     for (const p of pages) {
+//         if (p !== page) await p.close();
+//     }
+
+//     // Aggressive Ad-Popup Blocker
+//     browser.on('targetcreated', async (target) => {
+//         if (target.type() === 'page') {
+//             try {
+//                 const newPage = await target.page();
+//                 if (newPage && newPage !== page) {
+//                     console.log(`[*] Adware tab detected! Forcing video tab back to foreground...`);
+//                     await page.bringToFront(); 
+//                     setTimeout(() => newPage.close().catch(() => { }), 2000);
+//                 }
+//             } catch (e) { }
+//         }
+//     });
+
+//     if (useProxy) {
+//         await page.authenticate({ username: proxyUser, password: proxyPass });
+//     }
+
+//     const displayNum = process.env.DISPLAY || ':99';
+
+//     console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
+//     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+//     console.log('[*] Waiting for potential Cloudflare...');
+//     for (let i = 0; i < 15; i++) {
+//         const title = await page.title();
+//         if (!title.includes('Moment') && !title.includes('Cloudflare')) break;
+//         await new Promise(r => setTimeout(r, 1000));
+//     }
+
+//     await new Promise(resolve => setTimeout(resolve, 8000));
+
+//     // =========================================================================
+//     // 🧠 THE SMART SCANNER & CLEANER 
+//     // =========================================================================
+//     let targetFrame = null;
+//     console.log('[*] Scanning iframes for the REAL Live Stream Video...');
+//     for (const frame of page.frames()) {
+//         try {
+//             const isRealLiveStream = await frame.evaluate(() => {
+//                 const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+//                 if (!vid) return false;
+//                 if (vid.clientWidth < 300 || vid.clientHeight < 200) return false;
+//                 return true; 
+//             });
+
+//             if (isRealLiveStream) {
+//                 targetFrame = frame;
+//                 console.log(`[+] Smart Scanner selected Real Video in frame: ${frame.url() || 'unknown'}`);
+//             }
+
+//             await frame.evaluate(() => {
+//                 const floatedAd = document.getElementById('floated');
+//                 if (floatedAd) floatedAd.remove();
+//             });
+//         } catch (e) { }
+//     }
+
+//     if (!targetFrame) throw new Error('No <video> element could be found.');
+
+//     // =========================================================================
+//     // 🔊 AUDIO UNLOCKER + UI HIDER (STEALTH INITIALIZATION)
+//     // =========================================================================
+//     console.log('[*] Stealth Mode: Setting up Video DOM and hiding UI...');
+//     await targetFrame.evaluate(async () => {
+//         // 1. Initial play button click attempt
+//         const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('button');
+//         if (playBtn) {
+//             try { playBtn.click(); } catch(e) {}
+//         }
+        
+//         await new Promise(res => setTimeout(res, 500));
+
+//         // 2. CSS Injection: Hide all UI elements permanently
+//         const style = document.createElement('style');
+//         style.innerHTML = `
+//             .jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, .clappr-core, 
+//             [data-player] .controls, .unmute-overlay, .play-overlay, button, 
+//             .dplayer-controller, .dplayer-notice,
+//             .css-22y0zb, .css-1d9k47s, .css-rte19r, .css-1jpoid8, .css-re32dp, .css-3krx7z,
+//             div[aria-label="Error Overlay"], div[aria-label="Notice"], div[aria-label="Loading"],
+//             op-ui, .oplayer-ui {
+//                 display: none !important;
+//                 opacity: 0 !important;
+//                 visibility: hidden !important;
+//                 pointer-events: none !important;
+//             }
+//         `;
+//         document.head.appendChild(style);
+
+//         // 3. Initial Video Play attempt
+//         const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+//         if (video) {
+//             video.muted = false; 
+//             video.volume = 1.0; 
+//             await video.play().catch(e => {});
+//         }
+//     });
+
+//     await new Promise(r => setTimeout(r, 2000));
+
+//     // =========================================================================
+//     // 📡 FFMPEG BROADCAST (WITH A/V SYNC)
+//     // =========================================================================
+//     function startBroadcast() {
+//         if (ffmpegProcess) return; 
+        
+//         let ffmpegArgs = [];
+
+//         if (streamQuality.includes('40KBps')) {
+//             console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)...');
+//             ffmpegArgs = [
+//                 '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+//                 '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
+//                 '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+//                 '-vf', 'scale=640:360',
+//                 '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
+//                 '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
+//                 '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
+//                 '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
+//                 '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+//             ];
+//         } else {
+//             console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)...');
+//             ffmpegArgs = [
+//                 '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+//                 '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
+//                 '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+//                 '-vf', 'scale=854:480',
+//                 '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+//                 '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
+//                 '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
+//                 '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
+//                 '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+//             ];
+//         }
+
+//         ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+//         ffmpegProcess.stderr.on('data', (data) => {
+//             const output = data.toString().trim();
+//             if (output.includes('Error') || output.includes('Failed')) {
+//                 console.log(`\n[FFmpeg Issue]: ${output}`);
+//             }
+//         });
+
+//         ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
+//     }
+
+//     startBroadcast();
+
+//     // =========================================================================
+//     // 🧠 THE SMART WATCHDOG (Now with Built-in Anti-Pause & Freeze Checker)
+//     // =========================================================================
+//     console.log('\n[*] Smart Engine Connected! Monitoring Video Health, Privacy & PLAY STATUS 24/7...');
+
+//     let bufferCounter = 0; 
+
+//     while (true) {
+//         if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
+
+//         // 🛡️ STEP 1: CONSTANTLY ENFORCE MAIN PAGE PRIVACY
+//         await page.evaluate(() => {
+//             document.body.style.backgroundColor = 'black';
+//             document.body.style.overflow = 'hidden';
+//             const iframes = document.querySelectorAll('iframe');
+//             iframes.forEach(iframe => {
+//                 iframe.style.position = 'fixed';
+//                 iframe.style.top = '0';
+//                 iframe.style.left = '0';
+//                 iframe.style.width = '100vw';
+//                 iframe.style.height = '100vh';
+//                 iframe.style.zIndex = '999999'; 
+//                 iframe.style.backgroundColor = 'black';
+//                 iframe.style.border = 'none';
+//             });
+//         }).catch(() => {});
+
+//         // 🔍 STEP 2: CHECK VIDEO STATUS, FORCE PLAY & DETECT FREEZE (Inside Iframe)
+//         const status = await targetFrame.evaluate(async () => {
+//             const bodyText = document.body.innerText.toLowerCase();
+//             if (bodyText.includes("stream error") || bodyText.includes("could not be loaded") || bodyText.includes("network error")) {
+//                 return 'CRITICAL_ERROR';
+//             }
+
+//             const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+//             if (!v || v.ended) return 'DEAD';
+
+//             // 🛑 ANTI-PAUSE CHECKER: Har dafa check karega ke video pause toh nahi hai
+//             if (v.paused) {
+//                 v.muted = false; // Always ensure it is unmuted
+//                 try { await v.play(); } catch(e) {}
+                
+//                 // Agar standard play() kaam na kare, toh DOM Play Button ko dhoondh kar dobara click karega
+//                 const playBtn = document.querySelector('button[aria-label="Play"]') || document.querySelector('.css-rte19r') || document.querySelector('.vjs-big-play-button');
+//                 if (playBtn) {
+//                     try { playBtn.click(); } catch(e) {}
+//                 }
+//                 return 'FORCE_PLAYED'; // Special status return karega
+//             }
+
+//             if (v.readyState < 2) return 'BUFFERING';
+
+//             // ⏱️ ANTI-FREEZE DETECTOR: Track currentTime to see if video is actually moving
+//             if (typeof window.lastVideoTime === 'undefined') {
+//                 window.lastVideoTime = -1;
+//                 window.stuckCount = 0;
+//             }
+
+//             // Agar time pichle check se change nahi hua, iska matlab stream stuck hai
+//             if (v.currentTime === window.lastVideoTime) {
+//                 window.stuckCount++;
+//             } else {
+//                 window.stuckCount = 0; // Agar time aage barha, toh reset kar do
+//             }
+//             window.lastVideoTime = v.currentTime;
+
+//             // Agar lagataar 4 dafa (yani 12+ seconds) time nahi barha, toh declare it FROZEN
+//             if (window.stuckCount > 4) {
+//                 return 'FROZEN';
+//             }
+
+//             // Enforce Video Stretch inside iframe
+//             v.style.position = 'fixed';
+//             v.style.top = '0';
+//             v.style.left = '0';
+//             v.style.width = '100vw';
+//             v.style.height = '100vh';
+//             v.style.zIndex = '2147483647';
+//             v.style.backgroundColor = 'black';
+//             v.style.objectFit = 'contain';
+
+//             return 'HEALTHY';
+//         }).catch(() => 'EVAL_ERROR');
+
+//         // 🛑 STEP 3: HANDLE SPECIAL STATUSES
+//         if (status === 'FORCE_PLAYED') {
+//             console.log('[*] ⚠️ Watchdog Detected Pause! Code automatically triggered PLAY command via DOM.');
+//             bufferCounter = 0; // Buffer counter reset kar do taake stream restart na ho jaye
+//         } else if (status === 'BUFFERING') {
+//             await page.evaluate(() => {
+//                 let overlay = document.getElementById('main-watchdog-overlay');
+//                 if (!overlay) {
+//                     overlay = document.createElement('div');
+//                     overlay.id = 'main-watchdog-overlay';
+                    
+//                     overlay.innerHTML = `
+//                         <style>
+//                             @keyframes spin { 
+//                                 0% { transform: rotate(0deg); } 
+//                                 100% { transform: rotate(360deg); } 
+//                             }
+//                             .loader-container {
+//                                 text-align: center;
+//                                 color: white;
+//                                 font-family: sans-serif;
+//                             }
+//                             .loader {
+//                                 border: 8px solid rgba(255, 255, 255, 0.1); 
+//                                 border-top: 8px solid #ffaa00; 
+//                                 border-radius: 50%;
+//                                 width: 80px;
+//                                 height: 80px;
+//                                 animation: spin 1s linear infinite;
+//                                 margin: 0 auto 30px auto; 
+//                             }
+//                             .loading-text {
+//                                 font-size: 32px;
+//                                 font-weight: bold;
+//                                 margin-bottom: 15px;
+//                             }
+//                             .reassurance-text {
+//                                 font-size: 20px;
+//                                 color: #cccccc; 
+//                                 font-weight: normal;
+//                             }
+//                         </style>
+//                         <div class="loader-container">
+//                             <div class="loader"></div>
+//                             <div class="loading-text">Loading...</div>
+//                             <div class="reassurance-text">Please wait, stream is catching up!</div>
+//                         </div>
+//                     `;
+                    
+//                     overlay.style.position = 'fixed';
+//                     overlay.style.top = '0';
+//                     overlay.style.left = '0';
+//                     overlay.style.width = '100vw';
+//                     overlay.style.height = '100vh';
+//                     overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; 
+//                     overlay.style.zIndex = '2147483647'; 
+//                     overlay.style.display = 'flex';
+//                     overlay.style.alignItems = 'center';
+//                     overlay.style.justifyContent = 'center';
+//                     document.body.appendChild(overlay);
+//                 }
+//             }).catch(() => {});
+
+//             bufferCounter++;
+//             console.log(`[!] Video is buffering... showing Professional Secure Holding Screen. (${bufferCounter}/15)`);
+//             if (bufferCounter > 15) throw new Error("Video stuck in buffering for too long.");
+//         } else {
+//             await page.evaluate(() => {
+//                 let existingOverlay = document.getElementById('main-watchdog-overlay');
+//                 if (existingOverlay) existingOverlay.remove();
+//             }).catch(() => {});
+//             bufferCounter = 0; 
+//         }
+
+//         // 💥 JAISE HI FROZEN DETECT HO, ERROR THROW KARO TA KE MAIN LOOP RESTART HO JAYE
+//         if (status === 'CRITICAL_ERROR' || status === 'DEAD' || status === 'FROZEN') {
+//             console.log(`\n[!] ❌ STREAM ${status} DETECTED! Token expired ya stream rukh gayi hai. Auto-Restarting...`);
+//             throw new Error(`Watchdog detected video state as: ${status}. Needs fresh token.`); 
+//         }
+
+//         await new Promise(r => setTimeout(r, 3000)); 
+//     }
+// }
+
+// async function cleanup() {
+//     if (ffmpegProcess) {
+//         try { ffmpegProcess.stdin.end(); ffmpegProcess.kill('SIGKILL'); } catch (e) { }
+//         ffmpegProcess = null;
+//     }
+//     if (browser) {
+//         try { await browser.close(); } catch (e) { }
+//         browser = null;
+//     }
+// }
+
+// process.on('SIGINT', async () => {
+//     console.log('\n[*] Stopping live script cleanly...');
+//     await cleanup();
+//     process.exit(0);
+// });
+
+// // =========================================================================
+// // ⏱️ AUTO-OVERLAP TRIGGER (Runs exactly after 5h 50m)
+// // =========================================================================
+// setTimeout(async () => {
+//     console.log("\n[*] 5h 50m completed! Triggering next action for overlap...");
+//     const repo = process.env.GITHUB_REPOSITORY;
+//     const token = process.env.GH_PAT;
+//     const ref = process.env.GITHUB_REF_NAME || 'main';
+    
+//     const workflowFileName = 'main.yml'; 
+
+//     if (!repo || !token) {
+//         console.log("[!] GitHub Token (GH_PAT) ya Repo data nahi mila. Auto-trigger skip kar raha hu.");
+//         return;
+//     }
+
+//     try {
+//         const response = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFileName}/dispatches`, {
+//             method: 'POST',
+//             headers: {
+//                 'Accept': 'application/vnd.github.v3+json',
+//                 'Authorization': `token ${token}`
+//             },
+//             body: JSON.stringify({
+//                 ref: ref,
+//                 inputs: {
+//                     target_url: process.env.TARGET_URL,
+//                     okru_stream_channel: process.env.OKRU_STREAM_ID,
+//                     use_proxy: process.env.USE_PROXY,
+//                     stream_quality: process.env.STREAM_QUALITY
+//                 }
+//             })
+//         });
+
+//         if (response.ok) {
+//             console.log("[+] Next workflow run successfully triggered!");
+//         } else {
+//             const errTxt = await response.text();
+//             console.error("[-] GitHub API responded with error:", response.status, errTxt);
+//         }
+//     } catch (err) {
+//         console.error("[-] Failed to trigger next workflow:", err);
+//     }
+// }, 21000000); // 21,000,000 ms = exactly 5 Hours & 50 Minutes
+
+// mainLoop();
 
 
 
