@@ -1,4 +1,3 @@
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -140,7 +139,9 @@ async function startDirectStreaming() {
             '-f', 'x11grab', '-draw_mouse', '0', '-s', '1280x720', '-r', '20', '-i', displayNum,
             '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
             '-vf', 'scale=640:360',
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-profile:v', 'baseline', '-b:v', '200k',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-profile:v', 'baseline', 
+            '-pix_fmt', 'yuv420p', // <--- THE FIX IS HERE
+            '-b:v', '200k',
             '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
             '-f', 'flv', RTMP_DESTINATION 
         ];
@@ -150,7 +151,9 @@ async function startDirectStreaming() {
             '-f', 'x11grab', '-draw_mouse', '0', '-s', '1280x720', '-r', '30', '-i', displayNum,
             '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
             '-vf', 'scale=854:480',
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-profile:v', 'main', '-b:v', '800k',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-profile:v', 'main', 
+            '-pix_fmt', 'yuv420p', // <--- THE FIX IS HERE
+            '-b:v', '800k',
             '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
             '-f', 'flv', RTMP_DESTINATION 
         ];
@@ -161,8 +164,12 @@ async function startDirectStreaming() {
 
     ffmpegProcess.stderr.on('data', (data) => {
         const output = data.toString();
+        // Print errors but also print basic progress
         if (output.includes('Error') || output.includes('Failed')) {
             console.log(`[FFmpeg Error]: ${output.trim()}`);
+        } else if (output.includes('fps=')) {
+            // Optional: Print a status line so you know it's running
+            process.stdout.write(`\r[FFmpeg] Broadcasting: ${output.split('time=')[1]?.split(' ')[0] || 'working...'}`);
         }
     });
 
@@ -210,7 +217,6 @@ setTimeout(async () => {
 }, 21000000);
 
 mainLoop();
-
 
 
 
