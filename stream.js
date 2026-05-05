@@ -179,53 +179,50 @@ async function startDirectStreaming() {
     // =========================================================================
     // 📡 FFMPEG BROADCAST (ANTI-DRIFT & PERFECT SYNC SETTINGS)
     // =========================================================================
+
+
+    // =========================================================================
+    // 📡 FFMPEG BROADCAST (WITH SLOW INTERNET TIERS & ANTI-DRIFT)
+    // =========================================================================
     function startBroadcast() {
         if (ffmpegProcess) return; 
         
-        let ffmpegArgs = [];
+        let fps, vfScale, bv, maxrate, bufsize, ba, ac, ar;
 
-        if (streamQuality.includes('40KBps')) {
-            console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)... Anti-Drift Active!');
-            ffmpegArgs = [
-                '-y', 
-                // Buffer size barha diya taake hang hone par crash na ho
-                '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
-                '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
-                '-i', displayNum, 
-                '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
-                '-f', 'pulse', '-i', 'default',
-                '-vf', 'scale=640:360',
-                '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
-                // 👇 YEH FIX HAI: Hang hone par frames duplicate karega
-                '-vsync', '1', 
-                '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
-                '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
-                '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
-                // 👇 YEH FIX HAI: Live stream ke dauran continuously sync karta rahega
-                '-af', 'aresample=async=1', 
-                '-f', 'flv', RTMP_DESTINATION 
-            ];
+        // Quality Logic based on YAML Dropdown Selection
+        if (streamQuality.includes('20KBps')) {
+            console.log('\n[*] 🚀 FFmpeg Mode: EXTREME LOW (144p @ 15FPS) - For very slow internet...');
+            fps = '15'; vfScale = 'scale=256:144'; bv = '100k'; maxrate = '120k'; bufsize = '240k'; ba = '16k'; ac = '1'; ar = '22050';
+        } else if (streamQuality.includes('30KBps')) {
+            console.log('\n[*] 🚀 FFmpeg Mode: VERY LOW (240p @ 20FPS)...');
+            fps = '20'; vfScale = 'scale=426:240'; bv = '200k'; maxrate = '250k'; bufsize = '500k'; ba = '32k'; ac = '1'; ar = '44100';
+        } else if (streamQuality.includes('40KBps')) {
+            console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW (360p @ 20FPS)...');
+            fps = '20'; vfScale = 'scale=640:360'; bv = '200k'; maxrate = '250k'; bufsize = '500k'; ba = '32k'; ac = '1'; ar = '44100';
+        } else if (streamQuality.includes('50KBps')) {
+            console.log('\n[*] 🚀 FFmpeg Mode: LOW (360p @ 24FPS)...');
+            fps = '24'; vfScale = 'scale=640:360'; bv = '350k'; maxrate = '400k'; bufsize = '800k'; ba = '32k'; ac = '2'; ar = '44100';
         } else {
-            console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)... Anti-Drift Active!');
-            ffmpegArgs = [
-                '-y', 
-                '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
-                '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
-                '-i', displayNum, 
-                '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
-                '-f', 'pulse', '-i', 'default',
-                '-vf', 'scale=854:480',
-                '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
-                // 👇 YEH FIX HAI: Hang hone par frames duplicate karega
-                '-vsync', '1', 
-                '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
-                '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
-                '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
-                // 👇 YEH FIX HAI: Live stream ke dauran continuously sync karta rahega
-                '-af', 'aresample=async=1', 
-                '-f', 'flv', RTMP_DESTINATION 
-            ];
+            console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)...');
+            fps = '30'; vfScale = 'scale=854:480'; bv = '800k'; maxrate = '850k'; bufsize = '1700k'; ba = '64k'; ac = '2'; ar = '44100';
         }
+
+        const ffmpegArgs = [
+            '-y', 
+            '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
+            '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', fps,
+            '-i', displayNum, 
+            '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
+            '-f', 'pulse', '-i', 'default',
+            '-vf', vfScale,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+            '-vsync', '1', 
+            '-b:v', bv, '-maxrate', maxrate, '-bufsize', bufsize,
+            '-pix_fmt', 'yuv420p', '-g', String(parseInt(fps) * 2), '-max_muxing_queue_size', '1024',
+            '-c:a', 'aac', '-b:a', ba, '-ac', ac, '-ar', ar,
+            '-af', 'aresample=async=1', 
+            '-f', 'flv', RTMP_DESTINATION 
+        ];
 
         ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
@@ -238,6 +235,68 @@ async function startDirectStreaming() {
 
         ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
     }
+    
+    
+    // function startBroadcast() {
+    //     if (ffmpegProcess) return; 
+        
+    //     let ffmpegArgs = [];
+
+    //     if (streamQuality.includes('40KBps')) {
+    //         console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)... Anti-Drift Active!');
+    //         ffmpegArgs = [
+    //             '-y', 
+    //             // Buffer size barha diya taake hang hone par crash na ho
+    //             '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
+    //             '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
+    //             '-i', displayNum, 
+    //             '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
+    //             '-f', 'pulse', '-i', 'default',
+    //             '-vf', 'scale=640:360',
+    //             '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
+    //             // 👇 YEH FIX HAI: Hang hone par frames duplicate karega
+    //             '-vsync', '1', 
+    //             '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
+    //             '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
+    //             '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
+    //             // 👇 YEH FIX HAI: Live stream ke dauran continuously sync karta rahega
+    //             '-af', 'aresample=async=1', 
+    //             '-f', 'flv', RTMP_DESTINATION 
+    //         ];
+    //     } else {
+    //         console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)... Anti-Drift Active!');
+    //         ffmpegArgs = [
+    //             '-y', 
+    //             '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
+    //             '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
+    //             '-i', displayNum, 
+    //             '-thread_queue_size', '5120', '-use_wallclock_as_timestamps', '1',
+    //             '-f', 'pulse', '-i', 'default',
+    //             '-vf', 'scale=854:480',
+    //             '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+    //             // 👇 YEH FIX HAI: Hang hone par frames duplicate karega
+    //             '-vsync', '1', 
+    //             '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
+    //             '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
+    //             '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
+    //             // 👇 YEH FIX HAI: Live stream ke dauran continuously sync karta rahega
+    //             '-af', 'aresample=async=1', 
+    //             '-f', 'flv', RTMP_DESTINATION 
+    //         ];
+    //     }
+
+    //     ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+    //     ffmpegProcess.stderr.on('data', (data) => {
+    //         const output = data.toString().trim();
+    //         if (output.includes('Error') || output.includes('Failed')) {
+    //             console.log(`\n[FFmpeg Issue]: ${output}`);
+    //         }
+    //     });
+
+    //     ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
+    // }
+    
     // function startBroadcast() {
     //     if (ffmpegProcess) return; 
         
