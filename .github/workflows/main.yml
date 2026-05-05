@@ -1,63 +1,92 @@
 
-name: 24/7 OS-Level Live Stream
+name: 24/7 Live Stream Bot
 
 on:
   workflow_dispatch:
     inputs:
-      TARGET_URL:
+      target_url:
         description: 'Target Stream URL'
         required: true
-        default: 'https://dadocric.st/player.php?id=starsp3&v=m'
-      OKRU_STREAM_ID:
-        description: 'OK.ru Channel ID (1-8)'
+        type: string
+        default: 'https://dlstreams.com/watch.php?id=598'
+      okru_stream_channel: # 🚀 NAYA: OK.ru Stream Channel Selector
+        description: 'OK.ru Broadcast Channel (1 to 5)'
         required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+          - '7'
+          - '8'
         default: '1'
-      STREAM_QUALITY:
-        description: 'Quality (Balanced 480p or 40KBps)'
+      use_proxy:
+        description: 'Use Proxy (ON or OFF)'
         required: true
+        type: choice
+        options:
+          - 'OFF'
+          - 'ON'
+        default: 'OFF'
+      stream_quality:
+        description: 'Internet Speed / Stream Quality'
+        required: true
+        type: choice
+        options:
+          - '40KBps (Ultra-Low 360p)'
+          - '110KBps (Balanced 480p)'
         default: '110KBps (Balanced 480p)'
+  # schedule:
+  #   - cron: '0 */5 * * *'
+  # yeh code k matlb hai k yeh action automatically khud ba khud action run huu 
+
+permissions:
+  contents: write
 
 jobs:
-  recording_stream:
+  stream:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 360 # 6 Hours Limit set for safety
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+    - name: Get Code
+      uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
 
-      - name: Install Dependencies (FFmpeg, Xvfb, PulseAudio)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg xvfb pulseaudio alsa-utils
+    - name: Install FFmpeg, Virtual Display, & Audio Server
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg xvfb pulseaudio dbus-x11
 
-      - name: Setup Virtual Audio (PulseAudio) & Display (Xvfb)
-        run: |
-          # Fake Audio Device (Speakers) banana
-          pulseaudio -D --exit-idle-time=-1
-          pacmd load-module module-virtual-sink sink_name=v1
-          pacmd set-default-sink v1
-          pacmd set-default-source v1.monitor
-          
-          # Fake Screen (Display :99) banana
-          Xvfb :99 -screen 0 1280x720x24 &
-          
-      - name: Install NPM Packages
-        run: |
-          npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+    - name: Install Required Packages
+      run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth puppeteer-screen-recorder
 
-      - name: Start Recording & Streaming
-        env:
-          DISPLAY: :99
-          TARGET_URL: ${{ github.event.inputs.TARGET_URL }}
-          OKRU_STREAM_ID: ${{ github.event.inputs.OKRU_STREAM_ID }}
-          STREAM_QUALITY: ${{ github.event.inputs.STREAM_QUALITY }}
-          GH_PAT: ${{ secrets.GH_PAT }}
-        run: node stream.js
+    - name: Start Live Stream
+      env:
+        # Aapke secrets aur system variables Node ko bhej rahe hain taake wo API call kar sake
+        GH_PAT: ${{ secrets.GH_PAT }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        TARGET_URL: ${{ github.event.inputs.target_url || 'https://dadocric.st/player.php?id=starsp3&v=m' }}
+        OKRU_STREAM_ID: ${{ github.event.inputs.okru_stream_channel || '1' }}
+        USE_PROXY: ${{ github.event.inputs.use_proxy || 'OFF' }}
+        STREAM_QUALITY: ${{ github.event.inputs.stream_quality || '110KBps (Balanced 480p)' }}
+      run: |
+        # Start headless audio server for FFmpeg to capture
+        pulseaudio -D --exit-idle-time=-1
+        pacmd load-module module-virtual-sink sink_name=v1
+        pacmd set-default-sink v1
+        pacmd set-default-source v1.monitor
+
+        # Run Chromium inside a Virtual Monitor with exact 1280x720 HD resolution
+        xvfb-run -s "-screen 0 1280x720x24 -ac" node browser.js
         
 
 
